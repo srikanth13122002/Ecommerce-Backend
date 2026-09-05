@@ -2,55 +2,97 @@
 
 NestJS REST API for a modern ecommerce platform with MongoDB, JWT auth, and Stripe payments.
 
+**Repository:** [github.com/srikanth13122002/Ecommerce-Backend](https://github.com/srikanth13122002/Ecommerce-Backend)
+
 ## Tech Stack
 
-- **NestJS** - Node.js framework
-- **MongoDB** + **Mongoose** - Database
-- **JWT** - Authentication with refresh tokens
-- **Stripe** - Payment processing (test mode)
-- **Swagger** - API documentation at `/api/docs`
+- **NestJS** — Node.js framework
+- **MongoDB** + **Mongoose** — Database
+- **JWT** — Authentication with refresh tokens
+- **Stripe** — Payment processing
+- **Swagger** — API documentation at `/api/docs`
 
 ## Prerequisites
 
 - Node.js 18+
-- MongoDB running locally or MongoDB Atlas connection string
+- MongoDB (local, Docker, or [MongoDB Atlas](https://cloud.mongodb.com))
 
-## Setup
+## Local Setup
 
 1. Copy environment file:
+
    ```bash
    cp .env.example .env
    ```
 
-2. Update `.env` with your values:
-   - `MONGODB_URI` - MongoDB connection string
-   - `JWT_SECRET` / `JWT_REFRESH_SECRET` - Random secure strings
-   - `STRIPE_SECRET_KEY` - From [Stripe Dashboard](https://dashboard.stripe.com/test/apikeys)
-   - `STRIPE_WEBHOOK_SECRET` - From Stripe webhook settings (optional for local dev)
+2. Update `.env` with your values (see [Environment Variables](#environment-variables)).
 
 3. Install dependencies:
+
    ```bash
    npm install
    ```
 
 4. Seed the database (admin user + sample products):
+
    ```bash
    npm run seed
    ```
 
+   > **Warning:** The seed script clears existing products and categories. Use only in development/staging.
+
 5. Start development server:
+
    ```bash
    npm run start:dev
    ```
 
-API runs at `http://localhost:3000`  
-Swagger docs at `http://localhost:3000/api/docs`
+- API: `http://localhost:3000/api/v1`
+- Swagger: `http://localhost:3000/api/docs`
+- Uploaded images: `http://localhost:3000/uploads/...`
 
 ## Default Admin Credentials
 
 After seeding:
-- **Email:** admin@store.com
-- **Password:** Admin@123
+
+- **Email:** `admin@store.com`
+- **Password:** `Admin@123`
+
+Change these before any production deployment.
+
+## Environment Variables
+
+| Variable | Required | Description |
+|----------|----------|-------------|
+| `PORT` | No | Server port (default: `3000`) |
+| `MONGODB_URI` | Yes | MongoDB connection string |
+| `JWT_SECRET` | Yes | Access token signing secret |
+| `JWT_REFRESH_SECRET` | Yes | Refresh token signing secret |
+| `JWT_EXPIRES_IN` | No | Access token TTL (default: `15m`) |
+| `JWT_REFRESH_EXPIRES_IN` | No | Refresh token TTL (default: `7d`) |
+| `STRIPE_SECRET_KEY` | Yes | Stripe secret key (`sk_test_...` or `sk_live_...`) |
+| `STRIPE_WEBHOOK_SECRET` | Prod | Stripe webhook signing secret (`whsec_...`) |
+| `STRIPE_SUCCESS_URL` | Yes | Redirect after successful checkout |
+| `STRIPE_CANCEL_URL` | Yes | Redirect after cancelled checkout |
+| `CORS_ORIGIN` | Yes | Frontend URL (must match exactly) |
+| `UPLOAD_DIR` | No | Product image storage path (default: `./uploads`) |
+| `ADMIN_EMAIL` | Seed | Admin email for seed script |
+| `ADMIN_PASSWORD` | Seed | Admin password for seed script |
+
+### Production example
+
+```env
+PORT=3000
+MONGODB_URI=mongodb+srv://user:pass@cluster.mongodb.net/ecommerce
+JWT_SECRET=<long-random-string>
+JWT_REFRESH_SECRET=<long-random-string>
+STRIPE_SECRET_KEY=sk_live_...
+STRIPE_WEBHOOK_SECRET=whsec_...
+STRIPE_SUCCESS_URL=https://your-frontend.com/checkout/success
+STRIPE_CANCEL_URL=https://your-frontend.com/checkout/cancel
+CORS_ORIGIN=https://your-frontend.com
+UPLOAD_DIR=./uploads
+```
 
 ## API Routes
 
@@ -66,15 +108,53 @@ After seeding:
 | Admin | `/api/v1/admin` | Dashboard stats, users |
 | Upload | `/api/v1/upload` | Product image upload |
 
-## Stripe Webhook (Production)
+## Stripe Webhook
 
-For payment confirmation in production, configure a Stripe webhook pointing to:
-```
-POST /api/v1/payments/webhook
-```
-Event: `checkout.session.completed`
+Payment confirmation requires a Stripe webhook in production:
 
-For local testing without webhooks, orders remain in `pending` status until manually updated or webhook is configured via Stripe CLI.
+- **URL:** `POST https://your-api-domain.com/api/v1/payments/webhook`
+- **Event:** `checkout.session.completed`
+
+Set `STRIPE_WEBHOOK_SECRET` from the Stripe Dashboard after creating the endpoint.
+
+For local testing, use [Stripe CLI](https://stripe.com/docs/stripe-cli):
+
+```bash
+stripe listen --forward-to localhost:3000/api/v1/payments/webhook
+```
+
+Without a webhook, orders stay in `pending` status after checkout.
+
+## Production Deployment
+
+### Build and run
+
+```bash
+npm install
+npm run build
+npm run start:prod
+```
+
+The production entry point is `node dist/main`.
+
+### DevOps checklist
+
+- [ ] Set all production env vars on the host (never commit `.env`)
+- [ ] Use MongoDB Atlas or a managed MongoDB instance
+- [ ] Set `CORS_ORIGIN` to the exact frontend production URL
+- [ ] Configure Stripe live keys and webhook endpoint
+- [ ] Ensure `uploads/` directory is persistent (volume or object storage)
+- [ ] Change default admin password after first login
+- [ ] Run `npm run seed` only on fresh staging/dev databases
+- [ ] Expose port `3000` (or your configured `PORT`) behind HTTPS reverse proxy
+
+### Related frontend repo
+
+The React storefront lives in a separate repository:
+
+[github.com/srikanth13122002/Ecommerce-frontend](https://github.com/srikanth13122002/Ecommerce-frontend)
+
+Set the frontend `VITE_API_URL` to `https://your-api-domain.com/api/v1`.
 
 ## Scripts
 
