@@ -1,13 +1,13 @@
 # ShopVerse - Ecommerce Backend
 
-NestJS REST API for a modern ecommerce platform with MongoDB, JWT auth, and Stripe payments.
+NestJS REST API for a modern ecommerce platform with **PostgreSQL**, **Prisma**, JWT auth, and Stripe payments.
 
 **Repository:** [github.com/srikanth13122002/Ecommerce-Backend](https://github.com/srikanth13122002/Ecommerce-Backend)
 
 ## Tech Stack
 
 - **NestJS** — Node.js framework
-- **MongoDB** + **Mongoose** — Database
+- **PostgreSQL** + **Prisma** — Database and ORM
 - **JWT** — Authentication with refresh tokens
 - **Stripe** — Payment processing
 - **Swagger** — API documentation at `/api/docs`
@@ -15,7 +15,7 @@ NestJS REST API for a modern ecommerce platform with MongoDB, JWT auth, and Stri
 ## Prerequisites
 
 - Node.js 18+
-- MongoDB (local, Docker, or [MongoDB Atlas](https://cloud.mongodb.com))
+- Docker Desktop (recommended) or PostgreSQL 14+ installed locally
 
 ## Local Setup
 
@@ -33,15 +33,39 @@ NestJS REST API for a modern ecommerce platform with MongoDB, JWT auth, and Stri
    npm install
    ```
 
-4. Seed the database (admin user + sample products):
+4. Start PostgreSQL with Docker:
+
+   ```bash
+   docker compose up -d
+   ```
+
+   Default connection (matches `.env.example`):
+
+   ```
+   postgresql://postgres:postgres@localhost:5432/ecommerce
+   ```
+
+5. Sync the database schema:
+
+   ```bash
+   npm run prisma:push
+   ```
+
+   For tracked migrations in team/production workflows:
+
+   ```bash
+   npm run prisma:migrate
+   ```
+
+6. Seed the database (admin user + sample products):
 
    ```bash
    npm run seed
    ```
 
-   > **Warning:** The seed script clears existing products and categories. Use only in development/staging.
+   > **Warning:** The seed script clears existing data. Use only in development/staging.
 
-5. Start development server:
+7. Start the development server:
 
    ```bash
    npm run start:dev
@@ -65,7 +89,7 @@ Change these before any production deployment.
 | Variable | Required | Description |
 |----------|----------|-------------|
 | `PORT` | No | Server port (default: `3000`) |
-| `MONGODB_URI` | Yes | MongoDB connection string |
+| `DATABASE_URL` | Yes | PostgreSQL connection string |
 | `JWT_SECRET` | Yes | Access token signing secret |
 | `JWT_REFRESH_SECRET` | Yes | Refresh token signing secret |
 | `JWT_EXPIRES_IN` | No | Access token TTL (default: `15m`) |
@@ -83,7 +107,7 @@ Change these before any production deployment.
 
 ```env
 PORT=3000
-MONGODB_URI=mongodb+srv://user:pass@cluster.mongodb.net/ecommerce
+DATABASE_URL=postgresql://user:password@host:5432/ecommerce?sslmode=require
 JWT_SECRET=<long-random-string>
 JWT_REFRESH_SECRET=<long-random-string>
 STRIPE_SECRET_KEY=sk_live_...
@@ -93,6 +117,21 @@ STRIPE_CANCEL_URL=https://your-frontend.com/checkout/cancel
 CORS_ORIGIN=https://your-frontend.com
 UPLOAD_DIR=./uploads
 ```
+
+## Database
+
+PostgreSQL tables managed by Prisma:
+
+| Table | Description |
+|-------|-------------|
+| `users` | Customer and admin accounts |
+| `categories` | Product categories |
+| `products` | Product catalog |
+| `carts` / `cart_items` | Per-user shopping carts |
+| `orders` / `order_items` | Orders with line-item snapshots |
+| `reviews` | Product reviews (one per user per product) |
+
+Schema file: `prisma/schema.prisma`
 
 ## API Routes
 
@@ -131,6 +170,7 @@ Without a webhook, orders stay in `pending` status after checkout.
 
 ```bash
 npm install
+npm run prisma:generate
 npm run build
 npm run start:prod
 ```
@@ -140,7 +180,8 @@ The production entry point is `node dist/main`.
 ### DevOps checklist
 
 - [ ] Set all production env vars on the host (never commit `.env`)
-- [ ] Use MongoDB Atlas or a managed MongoDB instance
+- [ ] Use a managed PostgreSQL instance (Supabase, Neon, RDS, etc.)
+- [ ] Run `npm run prisma:migrate deploy` on production deploys
 - [ ] Set `CORS_ORIGIN` to the exact frontend production URL
 - [ ] Configure Stripe live keys and webhook endpoint
 - [ ] Ensure `uploads/` directory is persistent (volume or object storage)
@@ -164,3 +205,6 @@ Set the frontend `VITE_API_URL` to `https://your-api-domain.com/api/v1`.
 | `npm run build` | Production build |
 | `npm run start:prod` | Run production build |
 | `npm run seed` | Seed database with sample data |
+| `npm run prisma:generate` | Generate Prisma client |
+| `npm run prisma:migrate` | Create/apply Prisma migrations |
+| `npm run prisma:push` | Push schema to DB (dev shortcut) |

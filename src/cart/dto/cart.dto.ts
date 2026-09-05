@@ -1,10 +1,10 @@
-import { IsMongoId, IsNumber, Min } from 'class-validator';
+import { IsUUID, IsNumber, Min } from 'class-validator';
 import { ApiProperty } from '@nestjs/swagger';
 import { Type } from 'class-transformer';
 
 export class AddToCartDto {
   @ApiProperty()
-  @IsMongoId()
+  @IsUUID()
   productId!: string;
 
   @ApiProperty({ default: 1 })

@@ -2,7 +2,7 @@ import {
   IsString,
   IsArray,
   ValidateNested,
-  IsMongoId,
+  IsUUID,
   IsNumber,
   Min,
   MinLength,
@@ -49,7 +49,7 @@ export class ShippingAddressDto {
 
 export class OrderItemDto {
   @ApiProperty()
-  @IsMongoId()
+  @IsUUID()
   productId!: string;
 
   @ApiProperty()

@@ -1,70 +1,85 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
-import { InjectModel } from '@nestjs/mongoose';
-import { Model } from 'mongoose';
+import { User } from '@prisma/client';
 import * as bcrypt from 'bcrypt';
-import { User, UserDocument } from './schemas/user.schema.js';
+import { PrismaService } from '../prisma/prisma.service.js';
 import { UpdateProfileDto } from './dto/update-profile.dto.js';
 import { Role } from '../common/enums/role.enum.js';
 
 @Injectable()
 export class UsersService {
-  constructor(@InjectModel(User.name) private userModel: Model<UserDocument>) {}
+  constructor(private prisma: PrismaService) {}
 
   async create(data: {
     email: string;
     password: string;
     name: string;
     role?: Role;
-  }): Promise<UserDocument> {
+  }): Promise<User> {
     const passwordHash = await bcrypt.hash(data.password, 10);
-    return this.userModel.create({
-      email: data.email,
-      passwordHash,
-      name: data.name,
-      role: data.role ?? Role.Customer,
+    return this.prisma.user.create({
+      data: {
+        email: data.email.toLowerCase(),
+        passwordHash,
+        name: data.name,
+        role: data.role ?? Role.Customer,
+      },
     });
   }
 
-  async findByEmail(email: string): Promise<UserDocument | null> {
-    return this.userModel.findOne({ email: email.toLowerCase() });
+  async findByEmail(email: string): Promise<User | null> {
+    return this.prisma.user.findUnique({
+      where: { email: email.toLowerCase() },
+    });
   }
 
-  async findById(id: string): Promise<UserDocument | null> {
-    return this.userModel.findById(id);
+  async findById(id: string): Promise<User | null> {
+    return this.prisma.user.findUnique({ where: { id } });
   }
 
-  async findAll(): Promise<UserDocument[]> {
-    return this.userModel.find().select('-passwordHash -refreshTokenHash');
+  async findAll() {
+    return this.prisma.user.findMany({
+      select: {
+        id: true,
+        email: true,
+        name: true,
+        role: true,
+        createdAt: true,
+        updatedAt: true,
+      },
+    });
   }
 
-  async updateProfile(
-    userId: string,
-    dto: UpdateProfileDto,
-  ): Promise<UserDocument> {
-    const user = await this.userModel
-      .findByIdAndUpdate(userId, dto, { new: true })
-      .select('-passwordHash -refreshTokenHash');
-    if (!user) throw new NotFoundException('User not found');
-    return user;
+  async updateProfile(userId: string, dto: UpdateProfileDto): Promise<User> {
+    try {
+      return await this.prisma.user.update({
+        where: { id: userId },
+        data: dto,
+      });
+    } catch {
+      throw new NotFoundException('User not found');
+    }
   }
 
   async setRefreshToken(userId: string, token: string | null): Promise<void> {
     const refreshTokenHash = token ? await bcrypt.hash(token, 10) : '';
-    await this.userModel.findByIdAndUpdate(userId, { refreshTokenHash });
+    await this.prisma.user.update({
+      where: { id: userId },
+      data: { refreshTokenHash },
+    });
   }
 
   async validateRefreshToken(
     userId: string,
     token: string,
   ): Promise<boolean> {
-    const user = await this.userModel.findById(userId);
+    const user = await this.findById(userId);
     if (!user?.refreshTokenHash) return false;
     return bcrypt.compare(token, user.refreshTokenHash);
   }
 
-  sanitize(user: UserDocument) {
+  sanitize(user: Pick<User, 'id' | 'email' | 'name' | 'role'>) {
     return {
-      id: user._id.toString(),
+      id: user.id,
       email: user.email,
       name: user.name,
       role: user.role,

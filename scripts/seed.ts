@@ -1,9 +1,8 @@
-import mongoose from 'mongoose';
+import { PrismaClient } from '@prisma/client';
 import * as bcrypt from 'bcrypt';
 import 'dotenv/config';
 
-const MONGODB_URI =
-  process.env.MONGODB_URI || 'mongodb://localhost:27017/ecommerce';
+const prisma = new PrismaClient();
 
 const categories = [
   { name: 'Electronics', description: 'Gadgets and devices' },
@@ -45,89 +44,72 @@ function slugify(text: string): string {
 }
 
 async function seed() {
-  await mongoose.connect(MONGODB_URI);
-  console.log('Connected to MongoDB');
+  console.log('Connected to PostgreSQL');
 
-  const db = mongoose.connection.db!;
-  await db.dropDatabase();
-  console.log('Dropped existing database');
-
-  const usersCol = db.collection('users');
-  const categoriesCol = db.collection('categories');
-  const productsCol = db.collection('products');
+  await prisma.orderItem.deleteMany();
+  await prisma.order.deleteMany();
+  await prisma.cartItem.deleteMany();
+  await prisma.cart.deleteMany();
+  await prisma.review.deleteMany();
+  await prisma.product.deleteMany();
+  await prisma.category.deleteMany();
+  await prisma.user.deleteMany();
+  console.log('Cleared existing data');
 
   const adminEmail = process.env.ADMIN_EMAIL || 'admin@store.com';
   const adminPassword = process.env.ADMIN_PASSWORD || 'Admin@123';
   const passwordHash = await bcrypt.hash(adminPassword, 10);
 
-  await usersCol.insertOne({
-    email: adminEmail,
-    passwordHash,
-    name: 'Admin User',
-    role: 'admin',
-    refreshTokenHash: '',
-    createdAt: new Date(),
-    updatedAt: new Date(),
+  await prisma.user.create({
+    data: {
+      email: adminEmail,
+      passwordHash,
+      name: 'Admin User',
+      role: 'admin',
+    },
   });
   console.log(`Admin user created: ${adminEmail} / ${adminPassword}`);
 
-  const categoryMap: Record<string, mongoose.Types.ObjectId> = {};
+  const categoryMap: Record<string, string> = {};
   for (const cat of categories) {
-    const result = await categoriesCol.insertOne({
-      name: cat.name,
-      slug: slugify(cat.name),
-      description: cat.description,
-      image: '',
-      createdAt: new Date(),
-      updatedAt: new Date(),
+    const category = await prisma.category.create({
+      data: {
+        name: cat.name,
+        slug: slugify(cat.name),
+        description: cat.description,
+      },
     });
-    categoryMap[cat.name] = result.insertedId;
+    categoryMap[cat.name] = category.id;
   }
   console.log(`Created ${categories.length} categories`);
 
   for (let i = 0; i < productTemplates.length; i++) {
     const p = productTemplates[i];
-    await productsCol.insertOne({
-      name: p.name,
-      slug: slugify(p.name),
-      description: `High quality ${p.name.toLowerCase()} for everyday use. Built to last with premium materials and excellent craftsmanship.`,
-      price: p.price,
-      stock: Math.floor(Math.random() * 50) + 10,
-      images: [
-        `https://picsum.photos/seed/${slugify(p.name)}/600/600`,
-      ],
-      category: categoryMap[p.category],
-      featured: i < 8,
-      createdAt: new Date(),
-      updatedAt: new Date(),
+    await prisma.product.create({
+      data: {
+        name: p.name,
+        slug: slugify(p.name),
+        description: `High quality ${p.name.toLowerCase()} for everyday use. Built to last with premium materials and excellent craftsmanship.`,
+        price: p.price,
+        stock: Math.floor(Math.random() * 50) + 10,
+        images: [`https://picsum.photos/seed/${slugify(p.name)}/600/600`],
+        categoryId: categoryMap[p.category],
+        featured: i < 8,
+      },
     });
   }
   console.log(`Created ${productTemplates.length} products`);
 
-  await mongoose.disconnect();
   console.log('Seed completed successfully');
 }
 
-seed().catch((err) => {
-  if (err.name === 'MongooseServerSelectionError') {
-    const isAtlas = MONGODB_URI.includes('mongodb+srv') || MONGODB_URI.includes('mongodb.net');
-    console.error('\n❌ Could not connect to MongoDB at:', MONGODB_URI.replace(/:([^:@/]+)@/, ':***@'));
-    if (isAtlas) {
-      console.error('\nAtlas connection failed. Try these fixes:\n');
-      console.error('  1. Network Access → Add IP Address → "Add Current IP Address"');
-      console.error('     (Your IP may have changed since setup)');
-      console.error('  2. Or temporarily allow all: 0.0.0.0/0 (dev only)');
-      console.error('  3. Wait 2 minutes after adding IP, then retry');
-      console.error('  4. If on office/school WiFi, try mobile hotspot (port 27017 may be blocked)');
-      console.error('  5. Verify user/password in Database Access\n');
-    } else {
-      console.error('\nMongoDB is not running. Choose one option:\n');
-      console.error('  Option A — Docker: docker compose up -d (from project root)');
-      console.error('  Option B — MongoDB Atlas: set MONGODB_URI in .env');
-      console.error('  Option C — Install locally: mongodb.com/try/download/community\n');
-    }
-  } else {
-    console.error('Seed failed:', err);
-  }
-  process.exit(1);
-});
+seed()
+  .catch((err) => {
+    console.error('\n❌ Seed failed:', err.message);
+    console.error('\nMake sure PostgreSQL is running and DATABASE_URL is set in .env');
+    console.error('Example: DATABASE_URL=postgresql://postgres:postgres@localhost:5432/ecommerce\n');
+    process.exit(1);
+  })
+  .finally(async () => {
+    await prisma.$disconnect();
+  });

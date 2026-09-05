@@ -3,17 +3,17 @@ import {
   NotFoundException,
   BadRequestException,
 } from '@nestjs/common';
-import { InjectModel } from '@nestjs/mongoose';
-import { Model } from 'mongoose';
-import { Order, OrderDocument } from './schemas/order.schema.js';
+import { PrismaService } from '../prisma/prisma.service.js';
 import { CreateOrderDto, UpdateOrderStatusDto } from './dto/order.dto.js';
 import { ProductsService } from '../products/products.service.js';
 import { OrderStatus } from '../common/enums/order-status.enum.js';
+import { serializeOrder } from '../common/utils/serializers.js';
+import { toNumber } from '../common/utils/serializers.js';
 
 @Injectable()
 export class OrdersService {
   constructor(
-    @InjectModel(Order.name) private orderModel: Model<OrderDocument>,
+    private prisma: PrismaService,
     private productsService: ProductsService,
   ) {}
 
@@ -22,7 +22,13 @@ export class OrdersService {
       throw new BadRequestException('Order must have at least one item');
     }
 
-    const orderItems = [];
+    const orderItems: {
+      productId: string;
+      name: string;
+      price: number;
+      quantity: number;
+      image: string;
+    }[] = [];
     let total = 0;
 
     for (const item of dto.items) {
@@ -32,95 +38,129 @@ export class OrdersService {
           `Insufficient stock for ${product.name}`,
         );
       }
-      const lineTotal = product.price * item.quantity;
+      const lineTotal = toNumber(product.price) * item.quantity;
       total += lineTotal;
       orderItems.push({
-        product: product._id,
+        productId: product.id,
         name: product.name,
-        price: product.price,
+        price: toNumber(product.price),
         quantity: item.quantity,
         image: product.images?.[0] ?? '',
       });
     }
 
-    return this.orderModel.create({
-      user: userId,
-      items: orderItems,
-      total,
-      shippingAddress: dto.shippingAddress,
-      status: OrderStatus.Pending,
+    const order = await this.prisma.order.create({
+      data: {
+        userId,
+        total,
+        status: OrderStatus.Pending,
+        shippingFullName: dto.shippingAddress.fullName,
+        shippingAddressLine1: dto.shippingAddress.addressLine1,
+        shippingAddressLine2: dto.shippingAddress.addressLine2 ?? '',
+        shippingCity: dto.shippingAddress.city,
+        shippingState: dto.shippingAddress.state,
+        shippingPostalCode: dto.shippingAddress.postalCode,
+        shippingCountry: dto.shippingAddress.country,
+        shippingPhone: dto.shippingAddress.phone,
+        items: {
+          create: orderItems,
+        },
+      },
+      include: { items: true },
     });
+
+    return serializeOrder(order);
   }
 
   async findByUser(userId: string) {
-    return this.orderModel
-      .find({ user: userId })
-      .sort({ createdAt: -1 });
+    const orders = await this.prisma.order.findMany({
+      where: { userId },
+      include: { items: true },
+      orderBy: { createdAt: 'desc' },
+    });
+    return orders.map(serializeOrder);
   }
 
   async findById(id: string, userId?: string) {
-    const filter: Record<string, unknown> = { _id: id };
-    if (userId) filter.user = userId;
-    const order = await this.orderModel.findOne(filter);
+    const order = await this.prisma.order.findFirst({
+      where: userId ? { id, userId } : { id },
+      include: { items: true, user: { select: { id: true, name: true, email: true } } },
+    });
     if (!order) throw new NotFoundException('Order not found');
-    return order;
+    return serializeOrder(order);
   }
 
   async findAll(page = 1, limit = 20) {
     const skip = (page - 1) * limit;
     const [data, total] = await Promise.all([
-      this.orderModel
-        .find()
-        .populate('user', 'name email')
-        .sort({ createdAt: -1 })
-        .skip(skip)
-        .limit(limit),
-      this.orderModel.countDocuments(),
+      this.prisma.order.findMany({
+        include: {
+          items: true,
+          user: { select: { id: true, name: true, email: true } },
+        },
+        orderBy: { createdAt: 'desc' },
+        skip,
+        take: limit,
+      }),
+      this.prisma.order.count(),
     ]);
-    return { data, meta: { total, page, limit } };
+    return {
+      data: data.map(serializeOrder),
+      meta: { total, page, limit },
+    };
   }
 
   async updateStatus(id: string, dto: UpdateOrderStatusDto) {
-    const order = await this.orderModel.findByIdAndUpdate(
-      id,
-      { status: dto.status },
-      { new: true },
-    );
-    if (!order) throw new NotFoundException('Order not found');
-    return order;
+    try {
+      const order = await this.prisma.order.update({
+        where: { id },
+        data: { status: dto.status },
+        include: { items: true },
+      });
+      return serializeOrder(order);
+    } catch {
+      throw new NotFoundException('Order not found');
+    }
   }
 
   async markAsPaid(orderId: string, stripeSessionId: string) {
-    const order = await this.orderModel.findById(orderId);
+    const order = await this.prisma.order.findUnique({
+      where: { id: orderId },
+      include: { items: true },
+    });
     if (!order) throw new NotFoundException('Order not found');
-    if (order.status === OrderStatus.Paid) return order;
+    if (order.status === OrderStatus.Paid) return serializeOrder(order);
 
     await this.productsService.decrementStock(
       order.items.map((i) => ({
-        productId: i.product.toString(),
+        productId: i.productId,
         quantity: i.quantity,
       })),
     );
 
-    order.status = OrderStatus.Paid;
-    order.stripeSessionId = stripeSessionId;
-    return order.save();
+    const updated = await this.prisma.order.update({
+      where: { id: orderId },
+      data: { status: OrderStatus.Paid, stripeSessionId },
+      include: { items: true },
+    });
+
+    return serializeOrder(updated);
   }
 
   async getStats() {
     const [totalOrders, paidOrders, revenueResult] = await Promise.all([
-      this.orderModel.countDocuments(),
-      this.orderModel.countDocuments({ status: OrderStatus.Paid }),
-      this.orderModel.aggregate([
-        { $match: { status: OrderStatus.Paid } },
-        { $group: { _id: null, total: { $sum: '$total' } } },
-      ]),
+      this.prisma.order.count(),
+      this.prisma.order.count({ where: { status: OrderStatus.Paid } }),
+      this.prisma.order.aggregate({
+        where: { status: OrderStatus.Paid },
+        _sum: { total: true },
+      }),
     ]);
 
     return {
       totalOrders,
       paidOrders,
-      revenue: revenueResult[0]?.total ?? 0,
+      revenue: toNumber(revenueResult._sum.total ?? 0),
     };
   }
 }

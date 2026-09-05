@@ -1,12 +1,12 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
-import { InjectModel } from '@nestjs/mongoose';
-import { Model } from 'mongoose';
-import { Product, ProductDocument } from './schemas/product.schema.js';
+import { Prisma } from '@prisma/client';
+import { PrismaService } from '../prisma/prisma.service.js';
 import {
   CreateProductDto,
   UpdateProductDto,
   ProductQueryDto,
 } from './dto/product.dto.js';
+import { serializeProduct } from '../common/utils/serializers.js';
 
 function slugify(text: string): string {
   return text
@@ -18,9 +18,7 @@ function slugify(text: string): string {
 
 @Injectable()
 export class ProductsService {
-  constructor(
-    @InjectModel(Product.name) private productModel: Model<ProductDocument>,
-  ) {}
+  constructor(private prisma: PrismaService) {}
 
   async findAll(query: ProductQueryDto) {
     const {
@@ -34,35 +32,38 @@ export class ProductsService {
       featured,
     } = query;
 
-    const filter: Record<string, unknown> = {};
+    const where: Prisma.ProductWhereInput = {};
 
     if (search) {
-      filter.$text = { $search: search };
+      where.OR = [
+        { name: { contains: search, mode: 'insensitive' } },
+        { description: { contains: search, mode: 'insensitive' } },
+      ];
     }
-    if (category) filter.category = category;
+    if (category) where.categoryId = category;
     if (minPrice !== undefined || maxPrice !== undefined) {
-      const priceFilter: { $gte?: number; $lte?: number } = {};
-      if (minPrice !== undefined) priceFilter.$gte = minPrice;
-      if (maxPrice !== undefined) priceFilter.$lte = maxPrice;
-      filter.price = priceFilter;
+      where.price = {};
+      if (minPrice !== undefined) where.price.gte = minPrice;
+      if (maxPrice !== undefined) where.price.lte = maxPrice;
     }
-    if (featured !== undefined) filter.featured = featured;
+    if (featured !== undefined) where.featured = featured;
 
     const skip = (page - 1) * limit;
-    const sortObj = this.parseSort(sort);
+    const orderBy = this.parseSort(sort);
 
     const [data, total] = await Promise.all([
-      this.productModel
-        .find(filter)
-        .populate('category', 'name slug')
-        .sort(sortObj)
-        .skip(skip)
-        .limit(limit),
-      this.productModel.countDocuments(filter),
+      this.prisma.product.findMany({
+        where,
+        include: { category: true },
+        orderBy,
+        skip,
+        take: limit,
+      }),
+      this.prisma.product.count({ where }),
     ]);
 
     return {
-      data,
+      data: data.map(serializeProduct),
       meta: {
         total,
         page,
@@ -73,76 +74,116 @@ export class ProductsService {
   }
 
   async findFeatured(limit = 8) {
-    return this.productModel
-      .find({ featured: true })
-      .populate('category', 'name slug')
-      .limit(limit);
+    const products = await this.prisma.product.findMany({
+      where: { featured: true },
+      include: { category: true },
+      take: limit,
+    });
+    return products.map(serializeProduct);
   }
 
   async findBySlug(slug: string) {
-    const product = await this.productModel
-      .findOne({ slug })
-      .populate('category', 'name slug');
+    const product = await this.prisma.product.findUnique({
+      where: { slug },
+      include: { category: true },
+    });
     if (!product) throw new NotFoundException('Product not found');
-    return product;
+    return serializeProduct(product);
   }
 
   async findById(id: string) {
-    const product = await this.productModel
-      .findById(id)
-      .populate('category', 'name slug');
+    const product = await this.prisma.product.findUnique({
+      where: { id },
+      include: { category: true },
+    });
     if (!product) throw new NotFoundException('Product not found');
     return product;
   }
 
   async create(dto: CreateProductDto) {
-    return this.productModel.create({
-      ...dto,
-      slug: slugify(dto.name),
+    const product = await this.prisma.product.create({
+      data: {
+        name: dto.name,
+        slug: slugify(dto.name),
+        description: dto.description,
+        price: dto.price,
+        stock: dto.stock,
+        categoryId: dto.category,
+        images: dto.images ?? [],
+        featured: dto.featured ?? false,
+      },
+      include: { category: true },
     });
+    return serializeProduct(product);
   }
 
   async update(id: string, dto: UpdateProductDto) {
-    const update: Record<string, unknown> = { ...dto };
-    if (dto.name) update.slug = slugify(dto.name);
-    const product = await this.productModel
-      .findByIdAndUpdate(id, update, { new: true })
-      .populate('category', 'name slug');
-    if (!product) throw new NotFoundException('Product not found');
-    return product;
+    try {
+      const product = await this.prisma.product.update({
+        where: { id },
+        data: {
+          ...(dto.name !== undefined ? { name: dto.name, slug: slugify(dto.name) } : {}),
+          ...(dto.description !== undefined ? { description: dto.description } : {}),
+          ...(dto.price !== undefined ? { price: dto.price } : {}),
+          ...(dto.stock !== undefined ? { stock: dto.stock } : {}),
+          ...(dto.category !== undefined ? { categoryId: dto.category } : {}),
+          ...(dto.images !== undefined ? { images: dto.images } : {}),
+          ...(dto.featured !== undefined ? { featured: dto.featured } : {}),
+        },
+        include: { category: true },
+      });
+      return serializeProduct(product);
+    } catch {
+      throw new NotFoundException('Product not found');
+    }
   }
 
   async remove(id: string) {
-    const product = await this.productModel.findByIdAndDelete(id);
-    if (!product) throw new NotFoundException('Product not found');
-    return { deleted: true };
+    try {
+      await this.prisma.product.delete({ where: { id } });
+      return { deleted: true };
+    } catch {
+      throw new NotFoundException('Product not found');
+    }
   }
 
   async decrementStock(
     items: { productId: string; quantity: number }[],
   ): Promise<void> {
     for (const item of items) {
-      const product = await this.productModel.findById(item.productId);
-      if (!product) throw new NotFoundException(`Product ${item.productId} not found`);
+      const product = await this.prisma.product.findUnique({
+        where: { id: item.productId },
+      });
+      if (!product) {
+        throw new NotFoundException(`Product ${item.productId} not found`);
+      }
       if (product.stock < item.quantity) {
         throw new NotFoundException(`Insufficient stock for ${product.name}`);
       }
-      product.stock -= item.quantity;
-      await product.save();
+      await this.prisma.product.update({
+        where: { id: item.productId },
+        data: { stock: product.stock - item.quantity },
+      });
     }
   }
 
   async getLowStock(threshold = 5) {
-    return this.productModel
-      .find({ stock: { $lte: threshold } })
-      .populate('category', 'name slug')
-      .limit(10);
+    const products = await this.prisma.product.findMany({
+      where: { stock: { lte: threshold } },
+      include: { category: true },
+      take: 10,
+    });
+    return products.map(serializeProduct);
   }
 
-  private parseSort(sort: string): Record<string, 1 | -1> {
-    if (sort.startsWith('-')) {
-      return { [sort.slice(1)]: -1 };
+  private parseSort(sort: string): Prisma.ProductOrderByWithRelationInput {
+    const desc = sort.startsWith('-');
+    const field = desc ? sort.slice(1) : sort;
+    const direction = desc ? 'desc' : 'asc';
+
+    if (field === 'price' || field === 'name' || field === 'createdAt') {
+      return { [field]: direction };
     }
-    return { [sort]: 1 };
+    return { createdAt: 'desc' };
   }
 }

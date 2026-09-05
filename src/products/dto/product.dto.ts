@@ -1,7 +1,7 @@
 import {
   IsArray,
   IsBoolean,
-  IsMongoId,
+  IsUUID,
   IsNumber,
   IsOptional,
   IsString,
@@ -35,7 +35,7 @@ export class CreateProductDto {
   stock!: number;
 
   @ApiProperty()
-  @IsMongoId()
+  @IsUUID()
   category!: string;
 
   @ApiPropertyOptional({ type: [String] })
@@ -78,7 +78,7 @@ export class UpdateProductDto {
 
   @ApiPropertyOptional()
   @IsOptional()
-  @IsMongoId()
+  @IsUUID()
   category?: string;
 
   @ApiPropertyOptional({ type: [String] })
@@ -101,7 +101,7 @@ export class ProductQueryDto {
 
   @ApiPropertyOptional()
   @IsOptional()
-  @IsMongoId()
+  @IsUUID()
   category?: string;
 
   @ApiPropertyOptional()

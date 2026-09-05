@@ -1,8 +1,7 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
-import { InjectModel } from '@nestjs/mongoose';
-import { Model } from 'mongoose';
-import { Category, CategoryDocument } from './schemas/category.schema.js';
+import { PrismaService } from '../prisma/prisma.service.js';
 import { CreateCategoryDto, UpdateCategoryDto } from './dto/category.dto.js';
+import { serializeCategory } from '../common/utils/serializers.js';
 
 function slugify(text: string): string {
   return text
@@ -14,46 +13,58 @@ function slugify(text: string): string {
 
 @Injectable()
 export class CategoriesService {
-  constructor(
-    @InjectModel(Category.name) private categoryModel: Model<CategoryDocument>,
-  ) {}
+  constructor(private prisma: PrismaService) {}
 
   async findAll() {
-    return this.categoryModel.find().sort({ name: 1 });
+    const categories = await this.prisma.category.findMany({
+      orderBy: { name: 'asc' },
+    });
+    return categories.map(serializeCategory);
   }
 
   async findById(id: string) {
-    const category = await this.categoryModel.findById(id);
+    const category = await this.prisma.category.findUnique({ where: { id } });
     if (!category) throw new NotFoundException('Category not found');
-    return category;
+    return serializeCategory(category);
   }
 
   async findBySlug(slug: string) {
-    const category = await this.categoryModel.findOne({ slug });
+    const category = await this.prisma.category.findUnique({ where: { slug } });
     if (!category) throw new NotFoundException('Category not found');
-    return category;
+    return serializeCategory(category);
   }
 
   async create(dto: CreateCategoryDto) {
-    return this.categoryModel.create({
-      ...dto,
-      slug: slugify(dto.name),
+    const category = await this.prisma.category.create({
+      data: {
+        ...dto,
+        slug: slugify(dto.name),
+      },
     });
+    return serializeCategory(category);
   }
 
   async update(id: string, dto: UpdateCategoryDto) {
-    const update: Record<string, unknown> = { ...dto };
-    if (dto.name) update.slug = slugify(dto.name);
-    const category = await this.categoryModel.findByIdAndUpdate(id, update, {
-      new: true,
-    });
-    if (!category) throw new NotFoundException('Category not found');
-    return category;
+    try {
+      const category = await this.prisma.category.update({
+        where: { id },
+        data: {
+          ...dto,
+          ...(dto.name ? { slug: slugify(dto.name) } : {}),
+        },
+      });
+      return serializeCategory(category);
+    } catch {
+      throw new NotFoundException('Category not found');
+    }
   }
 
   async remove(id: string) {
-    const category = await this.categoryModel.findByIdAndDelete(id);
-    if (!category) throw new NotFoundException('Category not found');
-    return { deleted: true };
+    try {
+      await this.prisma.category.delete({ where: { id } });
+      return { deleted: true };
+    } catch {
+      throw new NotFoundException('Category not found');
+    }
   }
 }

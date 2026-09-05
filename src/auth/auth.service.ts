@@ -23,7 +23,7 @@ export class AuthService {
     if (existing) throw new ConflictException('Email already registered');
 
     const user = await this.usersService.create(dto);
-    return this.generateTokens(user._id.toString(), user.email, user.role);
+    return this.generateTokens(user.id, user.email, user.role);
   }
 
   async login(dto: LoginDto) {
@@ -33,7 +33,7 @@ export class AuthService {
     const valid = await bcrypt.compare(dto.password, user.passwordHash);
     if (!valid) throw new UnauthorizedException('Invalid credentials');
 
-    return this.generateTokens(user._id.toString(), user.email, user.role);
+    return this.generateTokens(user.id, user.email, user.role);
   }
 
   async refresh(refreshToken: string) {
@@ -51,7 +51,7 @@ export class AuthService {
       const user = await this.usersService.findById(payload.sub);
       if (!user) throw new UnauthorizedException('User not found');
 
-      return this.generateTokens(user._id.toString(), user.email, user.role);
+      return this.generateTokens(user.id, user.email, user.role);
     } catch {
       throw new UnauthorizedException('Invalid refresh token');
     }
